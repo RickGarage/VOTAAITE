@@ -99,6 +99,44 @@ def detect_audio_source():
     return monitors[0]
 
 
+def get_sink_mute(sink):
+    out = run(["pactl", "get-sink-mute", sink])
+    if out and out.returncode == 0:
+        return "yes" in out.stdout.strip().lower()
+    out = run(["pactl", "list", "sinks"])
+    if out and out.returncode == 0:
+        current = None
+        for line in out.stdout.splitlines():
+            text = line.strip()
+            if text.startswith("Name:"):
+                current = text.split(":", 1)[1].strip()
+            elif text.startswith("Mute:") and current == sink:
+                return "yes" in text.lower()
+    return None
+
+
+class SinkMute:
+    def __init__(self, sink):
+        self.sink = sink
+        self.previous = None
+        self.silenced = False
+
+    def mute(self):
+        if not self.sink or not shutil.which("pactl"):
+            return False
+        self.previous = get_sink_mute(self.sink)
+        if self.previous is True:
+            return False
+        run(["pactl", "set-sink-mute", self.sink, "1"])
+        self.silenced = True
+        return True
+
+    def restore(self):
+        if self.silenced and self.previous is not None:
+            run(["pactl", "set-sink-mute", self.sink, "1" if self.previous else "0"])
+        self.silenced = False
+
+
 def local_ip():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -416,6 +454,8 @@ def parse_args(argv):
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--audio", default=None, help="PulseAudio source (default: monitor of default sink)")
     parser.add_argument("--no-audio", action="store_true", help="Disable audio capture entirely")
+    parser.add_argument("--mute-local", action=argparse.BooleanOptionalAction, default=True,
+                        help="Mute the captured sink so the computer speakers stay silent (default: on)")
     parser.add_argument("--mode", choices=["split", "combined", "both"], default="split",
                         help="split: video-only for TV + audio-only for phone; combined: muxed audio+video; both: all streams")
     parser.add_argument("--video-bitrate", default="2500k")
@@ -470,52 +510,65 @@ def main(argv=None):
         print(" ".join(cmd))
         return 0
 
-    ffmpeg = Ffmpeg(cmd)
-    proc = ffmpeg.start()
-    time.sleep(0.5)
-    if proc.poll() is not None:
-        print("ffmpeg failed to start. Command:", file=sys.stderr)
-        print(" ".join(cmd), file=sys.stderr)
-        return 1
-
-    token = args.token or secrets.token_urlsafe(9)
-    handler = make_handler(args, token)
-    try:
-        httpd = Server((args.bind, args.port), handler)
-    except OSError as exc:
-        print(f"Cannot bind {args.bind}:{args.port}: {exc}", file=sys.stderr)
-        ffmpeg.stop()
-        return 1
-
-    ip = local_ip()
-    base = f"http://{ip}:{args.port}/t/{token}/"
-    print("VOTAAITE is running", flush=True)
-    print(f"  mode:  {args.mode}   capture: {args.size}@{args.fps}fps   audio: {audio or 'off'}", flush=True)
-    print(f"  TV:    {base}tv.html", flush=True)
-    if args.mode != "combined":
-        print(f"  Phone: {base}phone.html", flush=True)
-    print(f"  index: http://{ip}:{args.port}/", flush=True)
-    print("Press Ctrl+C to stop.", flush=True)
-
-    stop_event = threading.Event()
-    log_thread = threading.Thread(target=ffmpeg.stream_logs, args=(stop_event,), daemon=True)
-    log_thread.start()
-
-    def shutdown(signum, frame):
-        stop_event.set()
-        ffmpeg.stop()
-        threading.Thread(target=httpd.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
+    mute = None
+    if args.mute_local and audio and audio.endswith(".monitor"):
+        mute = SinkMute(audio[: -len(".monitor")])
 
     try:
-        httpd.serve_forever(poll_interval=0.5)
+        if mute:
+            mute.mute()
+
+        ffmpeg = Ffmpeg(cmd)
+        proc = ffmpeg.start()
+        time.sleep(0.5)
+        if proc.poll() is not None:
+            print("ffmpeg failed to start. Command:", file=sys.stderr)
+            print(" ".join(cmd), file=sys.stderr)
+            return 1
+
+        token = args.token or secrets.token_urlsafe(9)
+        handler = make_handler(args, token)
+        try:
+            httpd = Server((args.bind, args.port), handler)
+        except OSError as exc:
+            print(f"Cannot bind {args.bind}:{args.port}: {exc}", file=sys.stderr)
+            ffmpeg.stop()
+            return 1
+
+        ip = local_ip()
+        base = f"http://{ip}:{args.port}/t/{token}/"
+        print("VOTAAITE is running", flush=True)
+        print(f"  mode:  {args.mode}   capture: {args.size}@{args.fps}fps   audio: {audio or 'off'}", flush=True)
+        if mute and mute.silenced:
+            print("  local audio: muted (computer speakers are silent)", flush=True)
+        print(f"  TV:    {base}tv.html", flush=True)
+        if args.mode != "combined":
+            print(f"  Phone: {base}phone.html", flush=True)
+        print(f"  index: http://{ip}:{args.port}/", flush=True)
+        print("Press Ctrl+C to stop.", flush=True)
+
+        stop_event = threading.Event()
+        log_thread = threading.Thread(target=ffmpeg.stream_logs, args=(stop_event,), daemon=True)
+        log_thread.start()
+
+        def shutdown(signum, frame):
+            stop_event.set()
+            ffmpeg.stop()
+            threading.Thread(target=httpd.shutdown, daemon=True).start()
+
+        signal.signal(signal.SIGINT, shutdown)
+        signal.signal(signal.SIGTERM, shutdown)
+
+        try:
+            httpd.serve_forever(poll_interval=0.5)
+        finally:
+            stop_event.set()
+            ffmpeg.stop()
+            httpd.server_close()
+        return 0
     finally:
-        stop_event.set()
-        ffmpeg.stop()
-        httpd.server_close()
-    return 0
+        if mute:
+            mute.restore()
 
 
 if __name__ == "__main__":

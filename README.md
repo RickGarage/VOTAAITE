@@ -45,6 +45,11 @@ Phone: http://10.0.0.5:8099/t/AbC123/phone.html
 Both devices must be able to reach the computer over the network. The short
 access token in the URL keeps other devices out.
 
+By default the computer speakers are muted while VOTAAITE runs, so the sound
+only comes out of the phone. The original mute state is restored when you stop
+the program with Ctrl+C. Pass `--no-mute-local` to keep hearing the sound on the
+computer as well.
+
 You can also open `http://<computer-ip>:8099/` to see the links as a list.
 
 ## Modes
@@ -65,6 +70,7 @@ You can also open `http://<computer-ip>:8099/` to see the links as a list.
 | `--fps` | Framerate (default `30`) |
 | `--audio` | PulseAudio source (default: monitor of the default sink) |
 | `--no-audio` | Disable audio capture |
+| `--mute-local` / `--no-mute-local` | Mute the computer speakers while running (default: `--mute-local`) |
 | `--video-bitrate` | Video bitrate (default `2500k`) |
 | `--audio-bitrate` | Audio bitrate (default `128k`) |
 | `--preset` | x264 preset (default `veryfast`) |
