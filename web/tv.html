@@ -26,37 +26,41 @@
   var bufferMs = 6000;
   var player = null;
   var started = false;
+  var combined = false;
 
-  function setBadge(text, kind) {
-    document.title = "VOTAAITE TV - " + text;
+  function showOverlay(text) {
+    overlayText.textContent = text;
+    overlay.classList.remove("hidden");
   }
 
-  function onStatus(s) {
-    if (s.needsGesture) {
-      overlay.classList.remove("hidden");
-      overlayText.textContent = "Tap to start video";
-    } else if (s.error) {
-      overlay.classList.remove("hidden");
-      overlayText.textContent = "Error: " + s.error;
-    } else if (s.drift != null) {
-      setBadge("latency " + (s.latency / 1000).toFixed(1) + "s", "ok");
-    }
+  function hideOverlay() {
+    overlay.classList.add("hidden");
   }
 
   function start() {
     if (started) return;
     started = true;
-    overlay.classList.add("hidden");
+    hideOverlay();
+    if (combined) video.muted = false;
     video.play().catch(function () {
       started = false;
-      overlay.classList.remove("hidden");
+      showOverlay(combined ? "Tap to start video and sound" : "Tap to start video");
     });
+  }
+
+  function onStatus(s) {
+    if (s.needsGesture) {
+      showOverlay(combined ? "Tap to start video and sound" : "Tap to start video");
+    } else if (s.error) {
+      showOverlay("Error: " + s.error);
+    }
   }
 
   document.body.addEventListener("click", start);
 
   (async function () {
     var cfg = await window.VOTAAITE.fetchConfig();
+    combined = cfg.mode === "combined";
     bufferMs = (cfg.hlsTime || 2) * 3 * 1000;
     video.muted = true;
     player = new window.VOTAAITE.SyncPlayer(video, cfg.video, {
@@ -72,12 +76,13 @@
         fetch("api/report?role=tv&lat=" + lat, { cache: "no-store" }).catch(function () {});
       }
     }, 1000);
-    setTimeout(function () {
-      if (video.paused) {
-        overlay.classList.remove("hidden");
-        overlayText.textContent = "Tap to start video";
-      }
-    }, 1500);
+    if (combined) {
+      showOverlay("Tap to turn on sound");
+    } else {
+      setTimeout(function () {
+        if (video.paused) showOverlay("Tap to start video");
+      }, 1500);
+    }
   })();
 })();
 </script>

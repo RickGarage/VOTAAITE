@@ -56,7 +56,8 @@ You can also open `http://<computer-ip>:8099/` to see the links as a list.
 ## Modes
 
 - `--mode split` (default): video only to the TV, audio only to the phone.
-- `--mode combined`: one muxed audio+video stream to the TV.
+- `--mode combined`: one muxed audio+video stream to the TV. The page starts
+  muted so the browser allows autoplay; tap it once to turn the sound on.
 - `--mode both`: publish both the split and the combined streams.
 
 ## Common options
