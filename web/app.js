@@ -124,10 +124,36 @@
     this.resync();
   };
 
+  SyncPlayer.prototype.useNative = function () {
+    this.native = true;
+    this.media.src = this.url;
+    this.media.play().catch(function () {});
+  };
+
+  SyncPlayer.prototype.fallbackToNative = function (reason) {
+    if (this.native) {
+      this.onStatus({ error: reason });
+      return;
+    }
+    if (this.hls) {
+      this.hls.destroy();
+      this.hls = null;
+    }
+    if (this.media.canPlayType("application/vnd.apple.mpegurl")) {
+      this.onStatus({ native: true, reason: reason });
+      this.useNative();
+    } else {
+      this.onStatus({ error: reason });
+    }
+  };
+
   SyncPlayer.prototype.load = async function () {
     this.offset = await measureClockOffset();
     const self = this;
-    if (window.Hls && window.Hls.isSupported()) {
+    const canNative = this.media.canPlayType("application/vnd.apple.mpegurl");
+    if (this.options.forceNative && canNative) {
+      this.useNative();
+    } else if (window.Hls && window.Hls.isSupported()) {
       const syncCount = Math.max(1, Math.round(this.bufferMs / 1000 / (this.options.hlsTime || 2)));
       this.hls = new window.Hls({
         enableWorker: true,
@@ -146,7 +172,7 @@
         } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
           self.hls.recoverMediaError();
         } else {
-          self.onStatus({ error: data.details || "fatal error" });
+          self.fallbackToNative(data.details || "fatal error");
         }
       });
       this.hls.loadSource(this.url);

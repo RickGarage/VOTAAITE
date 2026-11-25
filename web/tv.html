@@ -62,6 +62,7 @@
     player = new window.VOTAAITE.SyncPlayer(video, cfg.video, {
       hlsTime: cfg.hlsTime,
       bufferMs: bufferMs,
+      forceNative: new URLSearchParams(location.search).get("native") === "1",
       onStatus: onStatus,
     });
     await player.load();

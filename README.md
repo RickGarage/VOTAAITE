@@ -22,8 +22,10 @@ stay aligned, so the video on the TV and the audio on the phone match.
 - Linux with X11 (`x11grab`)
 - `ffmpeg` in `PATH`
 - `pactl` (PulseAudio or PipeWire) if you want audio capture
-- A browser with Media Source Extensions on the TV (most Chromium-based TV
-  browsers). Safari-style browsers fall back to native HLS playback.
+- A TV browser that can play HLS. Chromium-based browsers (Android TV, newer
+  LG webOS) use hls.js; browsers with native HLS play it directly. The TV page
+  falls back to native playback automatically if hls.js fails, and you can force
+  it with `http://<ip>:8099/tv?native=1`.
 
 ## Usage
 
@@ -31,19 +33,18 @@ stay aligned, so the video on the TV and the audio on the phone match.
 python3 main.py
 ```
 
-The console prints two URLs, for example:
+The console prints two short URLs, for example:
 
 ```
-TV:    http://10.0.0.5:8099/t/AbC123/tv.html
-Phone: http://10.0.0.5:8099/t/AbC123/phone.html
+TV:    http://10.0.0.5:8099/tv
+Phone: http://10.0.0.5:8099/phone
 ```
 
 1. Open the TV URL on the TV browser and tap to start the video.
 2. Open the phone URL on the phone, tap **Play audio**, and use the nudge
    buttons if the sound drifts ahead or behind the video.
 
-Both devices must be able to reach the computer over the network. The short
-access token in the URL keeps other devices out.
+Both devices must be able to reach the computer over the network.
 
 By default the computer speakers are muted while VOTAAITE runs, so the sound
 only comes out of the phone. The original mute state is restored when you stop
@@ -75,7 +76,7 @@ You can also open `http://<computer-ip>:8099/` to see the links as a list.
 | `--audio-bitrate` | Audio bitrate (default `128k`) |
 | `--preset` | x264 preset (default `veryfast`) |
 | `--hls-time` | HLS segment duration in seconds (default `2.0`) |
-| `--token` | Use a fixed access token instead of a random one |
+| `--token` | Protect the URLs behind a short path token, e.g. `--token Z8N9` (off by default) |
 | `--list-devices` | Print detected screen and audio devices and exit |
 | `--dry-run` | Print the generated ffmpeg command and exit |
 
@@ -101,7 +102,9 @@ For a slower network, increase the buffer by editing the `bufferMs` default in
 - The server binds to `0.0.0.0` so devices on the shared network can reach it.
   Use `--bind 127.0.0.1` to keep it local, or `--bind <lan-ip>` for one
   interface only.
-- All content lives behind a random access token. Use `--token` to pin one.
+- URLs are open by default for easy typing on a TV remote. Add `--token Z8N9`
+  to require a short path token, for example `http://<ip>:8099/Z8N9/tv`, so
+  other devices on the shared network cannot watch.
 - `ffmpeg` only reads the screen and the audio monitor, and the server only
   serves files from `web/` and the runtime `.run/` directory.
 

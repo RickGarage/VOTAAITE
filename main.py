@@ -16,7 +16,6 @@ import http.server
 import json
 import os
 import re
-import secrets
 import shutil
 import signal
 import socket
@@ -309,30 +308,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET()
 
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
+    def resolve_path(self):
+        path = urllib.parse.urlparse(self.path).path
+        if not self.token:
+            return path
+        prefix = f"/{self.token}"
+        if path == prefix:
+            return "/"
+        if path.startswith(prefix + "/"):
+            return path[len(prefix):]
+        return None
 
-        if path == "/":
+    def do_GET(self):
+        path = self.resolve_path()
+        if path is None:
+            self.send_bytes(404, "text/plain; charset=utf-8", "Not found\n")
+            return
+        if path in ("/", "", "/index", "/index.html"):
             self.serve_landing()
             return
         if path == "/favicon.ico":
             self.send_bytes(204, "image/x-icon", b"")
             return
-
-        prefix = f"/t/{self.token}/"
-        if not path.startswith(prefix):
-            self.send_bytes(404, "text/plain; charset=utf-8", "Not found\n")
+        if path in ("/tv", "/tv.html"):
+            self.serve_file(WEB_DIR, "tv.html")
             return
-
-        rel = path[len(prefix):]
-        if rel in ("", "/", "index", "index.html"):
-            self.serve_landing()
+        if path in ("/phone", "/phone.html"):
+            self.serve_file(WEB_DIR, "phone.html")
             return
-        if rel == "api/sync":
+        if path == "/api/sync":
             self.send_json({"t": int(time.time() * 1000), "started": self.cfg.started})
             return
-        if rel == "api/config":
+        if path == "/api/config":
             self.send_json({
                 "mode": self.cfg.mode,
                 "audio": bool(self.cfg.audio),
@@ -343,11 +350,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "combined": "hls/combined/index.m3u8" if self.cfg.mode in ("combined", "both") else None,
             })
             return
-
-        if rel.startswith("hls/"):
-            self.serve_file(RUN_DIR, rel[len("hls/"):])
+        if path.startswith("/hls/"):
+            self.serve_file(RUN_DIR, path[len("/hls/"):])
             return
-        self.serve_file(WEB_DIR, rel)
+        self.serve_file(WEB_DIR, path.lstrip("/"))
 
     def serve_file(self, base, rel):
         rel = rel.split("?")[0].split("#")[0]
@@ -369,12 +375,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def serve_landing(self):
         host = self.headers.get("Host") or f"{local_ip()}:{self.cfg.port}"
-        base = f"http://{host}/t/{self.token}/"
+        prefix = f"/{self.token}" if self.token else ""
+        base = f"http://{host}{prefix}"
         mode = self.cfg.mode
         if mode == "combined":
-            roles = [("TV", base + "tv.html")]
+            roles = [("TV", base + "/tv")]
         else:
-            roles = [("TV", base + "tv.html"), ("Phone", base + "phone.html")]
+            roles = [("TV", base + "/tv"), ("Phone", base + "/phone")]
         links = "\n".join(
             f'<li><span class="role">{role}</span>'
             f'<a href="{url}">{url}</a></li>'
@@ -464,7 +471,8 @@ def parse_args(argv):
                         choices=["ultrafast", "superfast", "veryfast", "faster", "fast", "medium"])
     parser.add_argument("--hls-time", type=float, default=2.0)
     parser.add_argument("--list-size", type=int, default=8)
-    parser.add_argument("--token", default=None, help="Fixed access token instead of a random one")
+    parser.add_argument("--token", default=None,
+                        help="Protect the URLs behind a path token, e.g. --token Z8N9 (off by default)")
     parser.add_argument("--list-devices", action="store_true", help="Print detected screen and audio and exit")
     parser.add_argument("--dry-run", action="store_true", help="Print the ffmpeg command and exit")
     return parser.parse_args(argv)
@@ -526,7 +534,7 @@ def main(argv=None):
             print(" ".join(cmd), file=sys.stderr)
             return 1
 
-        token = args.token or secrets.token_urlsafe(9)
+        token = args.token
         handler = make_handler(args, token)
         try:
             httpd = Server((args.bind, args.port), handler)
@@ -536,14 +544,15 @@ def main(argv=None):
             return 1
 
         ip = local_ip()
-        base = f"http://{ip}:{args.port}/t/{token}/"
+        prefix = f"/{token}" if token else ""
+        base = f"http://{ip}:{args.port}{prefix}"
         print("VOTAAITE is running", flush=True)
         print(f"  mode:  {args.mode}   capture: {args.size}@{args.fps}fps   audio: {audio or 'off'}", flush=True)
         if mute and mute.silenced:
             print("  local audio: muted (computer speakers are silent)", flush=True)
-        print(f"  TV:    {base}tv.html", flush=True)
+        print(f"  TV:    {base}/tv", flush=True)
         if args.mode != "combined":
-            print(f"  Phone: {base}phone.html", flush=True)
+            print(f"  Phone: {base}/phone", flush=True)
         print(f"  index: http://{ip}:{args.port}/", flush=True)
         print("Press Ctrl+C to stop.", flush=True)
 
