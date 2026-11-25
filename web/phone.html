@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOTAAITE - Phone</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="phone-wrap">
+  <h1>Audio in your ear</h1>
+  <p class="hint">Keep this page open. Use the buttons to line the audio up with the video on the TV.</p>
+
+  <div class="card">
+    <div class="row center">
+      <button class="primary big-play" id="play">Play audio</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row center">
+      <button id="back">Audio -0.5s</button>
+      <button id="fwd">Audio +0.5s</button>
+      <button id="resync">Resync</button>
+    </div>
+    <p class="status" id="status">measuring clock...</p>
+  </div>
+
+  <audio id="audio" playsinline></audio>
+</div>
+<script src="vendor/hls.min.js"></script>
+<script src="app.js"></script>
+<script>
+(function () {
+  "use strict";
+  var audio = document.getElementById("audio");
+  var playBtn = document.getElementById("play");
+  var statusEl = document.getElementById("status");
+  var bufferMs = 6000;
+  var player = null;
+
+  function render(s) {
+    if (s.error) {
+      statusEl.textContent = "Error: " + s.error;
+      return;
+    }
+    if (s.needsGesture) {
+      statusEl.textContent = "Tap Play audio to start.";
+      return;
+    }
+    if (s.drift == null) return;
+    var state = Math.abs(s.drift) < 150 ? "in sync" : (s.drift > 0 ? "slightly ahead" : "slightly behind");
+    var cls = Math.abs(s.drift) < 150 ? "ok" : "warn";
+    statusEl.innerHTML =
+      'audio offset: <span class="badge ' + cls + '">' + state + '</span>\n' +
+      "drift: " + Math.round(s.drift) + " ms\n" +
+      "latency: " + (s.latency / 1000).toFixed(1) + " s\n" +
+      "buffer: " + (s.bufferMs / 1000).toFixed(1) + " s";
+  }
+
+  playBtn.addEventListener("click", function () {
+    audio.play().then(function () {
+      playBtn.textContent = "Playing";
+      playBtn.disabled = true;
+    }).catch(function () {});
+  });
+
+  document.getElementById("back").addEventListener("click", function () {
+    if (player) player.nudge(-500);
+  });
+  document.getElementById("fwd").addEventListener("click", function () {
+    if (player) player.nudge(500);
+  });
+  document.getElementById("resync").addEventListener("click", function () {
+    if (player) player.resync();
+  });
+
+  (async function () {
+    var cfg = await window.VOTAAITE.fetchConfig();
+    if (!cfg.audioUrl) {
+      statusEl.textContent = "No audio track is available. Run in split or both mode with audio enabled.";
+      playBtn.disabled = true;
+      return;
+    }
+    bufferMs = (cfg.hlsTime || 2) * 3 * 1000;
+    player = new window.VOTAAITE.SyncPlayer(audio, cfg.audioUrl, {
+      hlsTime: cfg.hlsTime,
+      bufferMs: bufferMs,
+      onStatus: render,
+    });
+    await player.load();
+  })();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOTAAITE - TV</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="tv">
+<div class="screen">
+  <div class="tv-stage">
+    <video id="video" playsinline autoplay muted></video>
+    <div class="overlay hidden" id="overlay">
+      <div class="big-play" id="overlayText">Tap to start video</div>
+    </div>
+  </div>
+</div>
+<script src="vendor/hls.min.js"></script>
+<script src="app.js"></script>
+<script>
+(function () {
+  "use strict";
+  var video = document.getElementById("video");
+  var overlay = document.getElementById("overlay");
+  var overlayText = document.getElementById("overlayText");
+  var bufferMs = 6000;
+  var player = null;
+  var started = false;
+
+  function setBadge(text, kind) {
+    document.title = "VOTAAITE TV - " + text;
+  }
+
+  function onStatus(s) {
+    if (s.needsGesture) {
+      overlay.classList.remove("hidden");
+      overlayText.textContent = "Tap to start video";
+    } else if (s.error) {
+      overlay.classList.remove("hidden");
+      overlayText.textContent = "Error: " + s.error;
+    } else if (s.drift != null) {
+      setBadge("latency " + (s.latency / 1000).toFixed(1) + "s", "ok");
+    }
+  }
+
+  function start() {
+    if (started) return;
+    started = true;
+    overlay.classList.add("hidden");
+    video.play().catch(function () {
+      started = false;
+      overlay.classList.remove("hidden");
+    });
+  }
+
+  document.body.addEventListener("click", start);
+
+  (async function () {
+    var cfg = await window.VOTAAITE.fetchConfig();
+    bufferMs = (cfg.hlsTime || 2) * 3 * 1000;
+    video.muted = true;
+    player = new window.VOTAAITE.SyncPlayer(video, cfg.video, {
+      hlsTime: cfg.hlsTime,
+      bufferMs: bufferMs,
+      onStatus: onStatus,
+    });
+    await player.load();
+    setTimeout(function () {
+      if (video.paused) {
+        overlay.classList.remove("hidden");
+        overlayText.textContent = "Tap to start video";
+      }
+    }, 1500);
+  })();
+})();
+</script>
+</body>
+</html>
