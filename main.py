@@ -31,6 +31,9 @@ RUN_DIR = os.path.join(ROOT, ".run")
 
 HLS_FLAGS = "delete_segments+program_date_time+independent_segments+omit_endlist"
 
+ANCHOR_LOCK = threading.Lock()
+ANCHOR = {"lat": None, "ts": 0.0}
+
 
 def run(cmd, env=None, timeout=10):
     try:
@@ -324,6 +327,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path is None:
             self.send_bytes(404, "text/plain; charset=utf-8", "Not found\n")
             return
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         if path in ("/", "", "/index", "/index.html"):
             self.serve_landing()
             return
@@ -338,6 +342,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/sync":
             self.send_json({"t": int(time.time() * 1000), "started": self.cfg.started})
+            return
+        if path == "/api/report":
+            role = query.get("role", [""])[0]
+            lat = query.get("lat", [None])[0]
+            if role == "tv" and lat is not None:
+                try:
+                    with ANCHOR_LOCK:
+                        ANCHOR["lat"] = float(lat)
+                        ANCHOR["ts"] = time.time()
+                except ValueError:
+                    pass
+            self.send_bytes(204, "text/plain; charset=utf-8", b"")
+            return
+        if path == "/api/anchor":
+            with ANCHOR_LOCK:
+                lat = ANCHOR["lat"]
+                ts = ANCHOR["ts"]
+            self.send_json({
+                "tvLat": lat,
+                "age": None if lat is None else (time.time() - ts) * 1000,
+            })
             return
         if path == "/api/config":
             self.send_json({

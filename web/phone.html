@@ -9,7 +9,7 @@
 <body>
 <div class="phone-wrap">
   <h1>Audio in your ear</h1>
-  <p class="hint">Keep this page open. Use the buttons to line the audio up with the video on the TV.</p>
+  <p class="hint">Keep this page open. The sound follows the TV automatically. If it is still a little early or late, drag the slider until it lines up.</p>
 
   <div class="card">
     <div class="row center">
@@ -18,9 +18,16 @@
   </div>
 
   <div class="card">
+    <div class="offset-value"><span id="offsetLabel">0.00 s</span></div>
+    <input type="range" id="offset" min="-15" max="15" step="0.05" value="0">
     <div class="row center">
-      <button id="back">Audio -0.5s</button>
-      <button id="fwd">Audio +0.5s</button>
+      <button id="m1">-1s</button>
+      <button id="m01">-0.1s</button>
+      <button id="p01">+0.1s</button>
+      <button id="p1">+1s</button>
+    </div>
+    <div class="row center">
+      <button id="reset">Reset offset</button>
       <button id="resync">Resync</button>
     </div>
     <p class="status" id="status">measuring clock...</p>
@@ -33,11 +40,39 @@
 <script>
 (function () {
   "use strict";
+  var STORAGE_KEY = "votaite.offset";
   var audio = document.getElementById("audio");
   var playBtn = document.getElementById("play");
   var statusEl = document.getElementById("status");
-  var bufferMs = 6000;
+  var slider = document.getElementById("offset");
+  var label = document.getElementById("offsetLabel");
   var player = null;
+  var sourceMode = "measuring";
+
+  function storedOffset() {
+    var value = parseFloat(localStorage.getItem(STORAGE_KEY));
+    return isFinite(value) ? value : 0;
+  }
+
+  function renderOffset(seconds) {
+    label.textContent = (seconds >= 0 ? "+" : "") + seconds.toFixed(2) + " s";
+    slider.value = String(seconds);
+  }
+
+  var lastSeek = 0;
+
+  function applyOffset(seconds, save, immediate) {
+    seconds = Math.max(-15, Math.min(15, seconds));
+    renderOffset(seconds);
+    if (save) localStorage.setItem(STORAGE_KEY, String(seconds));
+    if (!player) return;
+    player.setUserOffset(seconds * 1000);
+    var now = Date.now();
+    if (immediate || now - lastSeek > 200) {
+      lastSeek = now;
+      player.seekToTarget();
+    }
+  }
 
   function render(s) {
     if (s.error) {
@@ -49,14 +84,34 @@
       return;
     }
     if (s.drift == null) return;
-    var state = Math.abs(s.drift) < 150 ? "in sync" : (s.drift > 0 ? "slightly ahead" : "slightly behind");
-    var cls = Math.abs(s.drift) < 150 ? "ok" : "warn";
+    var cls = Math.abs(s.drift) < 120 ? "ok" : "warn";
+    var state = Math.abs(s.drift) < 120 ? "in sync" : (s.drift > 0 ? "ahead" : "behind");
     statusEl.innerHTML =
-      'audio offset: <span class="badge ' + cls + '">' + state + '</span>\n' +
+      'status: <span class="badge ' + cls + '">' + state + '</span>\n' +
       "drift: " + Math.round(s.drift) + " ms\n" +
-      "latency: " + (s.latency / 1000).toFixed(1) + " s\n" +
-      "buffer: " + (s.bufferMs / 1000).toFixed(1) + " s";
+      "latency: " + (s.latency / 1000).toFixed(2) + " s\n" +
+      "buffer: " + (s.bufferMs / 1000).toFixed(2) + " s (" + sourceMode + ")";
   }
+
+  slider.addEventListener("input", function () {
+    applyOffset(parseFloat(slider.value), true, false);
+  });
+  slider.addEventListener("change", function () {
+    applyOffset(parseFloat(slider.value), true, true);
+  });
+
+  function nudge(seconds) {
+    applyOffset(parseFloat(slider.value) + seconds, true, true);
+  }
+
+  document.getElementById("m1").addEventListener("click", function () { nudge(-1); });
+  document.getElementById("m01").addEventListener("click", function () { nudge(-0.1); });
+  document.getElementById("p01").addEventListener("click", function () { nudge(0.1); });
+  document.getElementById("p1").addEventListener("click", function () { nudge(1); });
+  document.getElementById("reset").addEventListener("click", function () { applyOffset(0, true, true); });
+  document.getElementById("resync").addEventListener("click", function () {
+    if (player) player.resync();
+  });
 
   playBtn.addEventListener("click", function () {
     audio.play().then(function () {
@@ -65,15 +120,20 @@
     }).catch(function () {});
   });
 
-  document.getElementById("back").addEventListener("click", function () {
-    if (player) player.nudge(-500);
-  });
-  document.getElementById("fwd").addEventListener("click", function () {
-    if (player) player.nudge(500);
-  });
-  document.getElementById("resync").addEventListener("click", function () {
-    if (player) player.resync();
-  });
+  async function followAnchor() {
+    try {
+      var res = await fetch("api/anchor", { cache: "no-store" });
+      var anchor = await res.json();
+      if (anchor.tvLat != null && anchor.age != null && anchor.age < 5000) {
+        player.setAutoBuffer(anchor.tvLat * 1000);
+        sourceMode = "following TV " + anchor.tvLat.toFixed(1) + "s";
+      } else {
+        sourceMode = "auto";
+      }
+    } catch (err) {
+      sourceMode = "auto";
+    }
+  }
 
   (async function () {
     var cfg = await window.VOTAAITE.fetchConfig();
@@ -82,13 +142,17 @@
       playBtn.disabled = true;
       return;
     }
-    bufferMs = (cfg.hlsTime || 2) * 3 * 1000;
+    var defaultBuffer = (cfg.hlsTime || 2) * 3 * 1000;
     player = new window.VOTAAITE.SyncPlayer(audio, cfg.audioUrl, {
       hlsTime: cfg.hlsTime,
-      bufferMs: bufferMs,
+      bufferMs: defaultBuffer,
+      userOffsetMs: storedOffset() * 1000,
       onStatus: render,
     });
+    renderOffset(storedOffset());
     await player.load();
+    followAnchor();
+    setInterval(followAnchor, 2000);
   })();
 })();
 </script>

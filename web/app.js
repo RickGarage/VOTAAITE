@@ -41,11 +41,16 @@
     this.hls = null;
     this.offset = 0;
     this.activeFrag = null;
-    this.bufferMs = this.options.bufferMs || 6000;
+    this.autoBufferMs = this.options.bufferMs || 6000;
+    this.userOffsetMs = this.options.userOffsetMs || 0;
     this.timer = null;
     this.onStatus = this.options.onStatus || function () {};
     this.native = false;
   }
+
+  SyncPlayer.prototype.bufferMs = function () {
+    return clamp(this.autoBufferMs + this.userOffsetMs, 500, 30000);
+  };
 
   SyncPlayer.prototype.serverNow = function () {
     return Date.now() + this.offset;
@@ -68,6 +73,36 @@
     return frag.programDateTime + (this.media.currentTime - frag.start) * 1000;
   };
 
+  SyncPlayer.prototype.liveEdgeEpoch = function () {
+    const details = this.details();
+    if (!details || !details.fragments.length) return null;
+    const last = details.fragments[details.fragments.length - 1];
+    if (last.programDateTime == null) return null;
+    return last.programDateTime + last.duration * 1000;
+  };
+
+  SyncPlayer.prototype.latencySeconds = function () {
+    if (this.hls && typeof this.hls.latency === "number" && isFinite(this.hls.latency)) {
+      return Math.max(0, this.hls.latency);
+    }
+    const seekable = this.media.seekable;
+    if (this.native && seekable && seekable.length) {
+      return Math.max(0, seekable.end(seekable.length - 1) - this.media.currentTime);
+    }
+    const details = this.details();
+    if (details && details.fragments.length) {
+      const last = details.fragments[details.fragments.length - 1];
+      return Math.max(0, last.start + last.duration - this.media.currentTime);
+    }
+    return null;
+  };
+
+  SyncPlayer.prototype.targetContent = function () {
+    const edge = this.liveEdgeEpoch();
+    if (edge != null) return edge - this.bufferMs();
+    return this.serverNow() - this.bufferMs();
+  };
+
   SyncPlayer.prototype.seekToContent = function (targetEpoch) {
     const details = this.details();
     if (!details) return false;
@@ -84,10 +119,13 @@
     return false;
   };
 
+  SyncPlayer.prototype.seekToTarget = function () {
+    this.seekToContent(this.targetContent());
+  };
+
   SyncPlayer.prototype.tick = function () {
     if (this.media.paused || this.native) return;
-    const now = this.serverNow();
-    const target = now - this.bufferMs;
+    const target = this.targetContent();
     const current = this.currentContentEpoch();
     if (current == null) return;
     const drift = current - target;
@@ -99,29 +137,33 @@
     } else {
       this.media.playbackRate = 1;
     }
+    const edge = this.liveEdgeEpoch();
     this.onStatus({
       drift: drift,
-      latency: now - current,
-      bufferMs: this.bufferMs,
+      latency: edge != null ? edge - current : this.serverNow() - current,
+      bufferMs: this.bufferMs(),
+      offsetMs: this.userOffsetMs,
+      autoBufferMs: this.autoBufferMs,
       rate: this.media.playbackRate,
     });
   };
 
   SyncPlayer.prototype.resync = async function () {
     this.offset = await measureClockOffset();
-    const target = this.serverNow() - this.bufferMs;
-    if (!this.seekToContent(target)) {
-      const details = this.details();
-      if (details && details.fragments.length) {
-        const last = details.fragments[details.fragments.length - 1];
-        this.media.currentTime = last.start;
-      }
-    }
+    this.seekToTarget();
+  };
+
+  SyncPlayer.prototype.setUserOffset = function (ms) {
+    this.userOffsetMs = clamp(ms, -20000, 20000);
   };
 
   SyncPlayer.prototype.nudge = function (deltaMs) {
-    this.bufferMs = clamp(this.bufferMs + deltaMs, 1000, 60000);
-    this.resync();
+    this.setUserOffset(this.userOffsetMs + deltaMs);
+    this.seekToTarget();
+  };
+
+  SyncPlayer.prototype.setAutoBuffer = function (ms) {
+    this.autoBufferMs = clamp(ms, 1000, 30000);
   };
 
   SyncPlayer.prototype.useNative = function () {
@@ -154,12 +196,12 @@
     if (this.options.forceNative && canNative) {
       this.useNative();
     } else if (window.Hls && window.Hls.isSupported()) {
-      const syncCount = Math.max(1, Math.round(this.bufferMs / 1000 / (this.options.hlsTime || 2)));
+      const syncCount = Math.max(1, Math.round(this.autoBufferMs / 1000 / (this.options.hlsTime || 2)));
       this.hls = new window.Hls({
         enableWorker: true,
         lowLatencyMode: false,
         liveSyncDurationCount: syncCount,
-        liveMaxLatencyDurationCount: syncCount + 6,
+        liveMaxLatencyDurationCount: syncCount + 8,
         backBufferLength: 30,
       });
       this.hls.on(window.Hls.Events.FRAG_CHANGED, function (event, data) {
@@ -175,20 +217,19 @@
           self.fallbackToNative(data.details || "fatal error");
         }
       });
-      this.hls.loadSource(this.url);
-      this.hls.attachMedia(this.media);
       this.hls.on(window.Hls.Events.MANIFEST_PARSED, function () {
         self.resync();
       });
-    } else if (this.media.canPlayType("application/vnd.apple.mpegurl")) {
-      this.native = true;
-      this.media.src = this.url;
+      this.hls.loadSource(this.url);
+      this.hls.attachMedia(this.media);
+    } else if (canNative) {
+      this.useNative();
     } else {
       this.onStatus({ error: "HLS is not supported in this browser." });
       return;
     }
 
-    this.timer = setInterval(function () { self.tick(); }, 500);
+    this.timer = setInterval(function () { self.tick(); }, 400);
 
     const startup = async function () {
       try {
@@ -209,5 +250,6 @@
     fetchConfig: fetchConfig,
     SyncPlayer: SyncPlayer,
     sleep: sleep,
+    clamp: clamp,
   };
 })();

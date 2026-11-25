@@ -88,14 +88,18 @@ python3 main.py --scale 1280:-2 --fps 30 --video-bitrate 2000k
 
 ## Sync tuning
 
-Both players target the same point on the server clock, about three segments
-behind live. That buffer is the `buffer` value shown on the phone page. Use
-**Audio -0.5s** / **Audio +0.5s** to shift only the phone and align the sound
-with the TV. **Resync** re-measures the clock offset and jumps back to the
-target position.
+The TV page measures how far behind the live edge it is playing and reports it
+to the server. The phone page reads that value and matches the same latency, so
+the sound lines up with the picture even when the TV uses its own native player
+and has a large internal buffer.
 
-For a slower network, increase the buffer by editing the `bufferMs` default in
-`web/tv.html` and `web/phone.html`, or lower `--video-bitrate`.
+If the sound is still a touch early or late, drag the slider on the phone page
+(or use the 0.1s buttons) until it fits. The offset is stored in the browser and
+remembered for next time. **Resync** re-measures the clock and jumps back.
+
+If the TV cannot report (for example the browser does not run the page), the
+phone falls back to a fixed three-segment delay. For a slower network, lower
+`--video-bitrate` or raise the offset.
 
 ## Security notes
 

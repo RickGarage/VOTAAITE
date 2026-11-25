@@ -66,6 +66,12 @@
       onStatus: onStatus,
     });
     await player.load();
+    setInterval(function () {
+      var lat = player.latencySeconds();
+      if (lat != null) {
+        fetch("api/report?role=tv&lat=" + lat, { cache: "no-store" }).catch(function () {});
+      }
+    }, 1000);
     setTimeout(function () {
       if (video.paused) {
         overlay.classList.remove("hidden");
